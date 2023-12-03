@@ -27,7 +27,7 @@ if __name__ == '__main__':
 
     cookies = None
     
-    with open("cookies.json", 'r') as f:
+    with open("cookies_feliks912.json", 'r') as f:
         cookies = json.load(f)
 
     selenium_cookies_to_netscape_format(cookies, ".twitter.com")

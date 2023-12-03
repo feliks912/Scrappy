@@ -56,7 +56,7 @@ class Tweet:
                  like_cnt: int,
                  image_links: List[str],
                  tweet_url: str,
-                 show_more: bool,
+                 show_more: bool = False,
                  replies: Optional[Set['Tweet']] = None,
                  replied_to: Optional['Tweet'] = None):
         self.username = username
