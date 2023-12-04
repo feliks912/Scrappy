@@ -1,95 +1,89 @@
-from altair import TimeUnit
-from selenium import webdriver
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.by import By
-import scrappy_get
-import math
-import Tweet
+from playwright.async_api import BrowserContext, TimeoutError
+import scrappy_get  # Assuming this is a custom module for handling tweet data
 
 
-def scrape_search(driver: webdriver, limit: int = -1):
+async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, batch_size=5):
     """
-    Gets the Twitter advance search timeline and scrapes limit tweets off of it.
+    Gets the Twitter advanced search timeline and scrapes limit tweets off of it.
 
     Tweets with 'Read more' can't have their text fetched on the timeline, so upon scraping all tweets the script opens those tweets separately 5 at a time in separate tabs and overwrites the text.
 
-    :param driver: chromedriver/geckodriver instance
+    :param batch_size:
+    :param context:
+    :param advanced_url:
     :param limit: How many tweets to scrape
-    :return: a set of scraped tweets
+    :return: a list of scraped tweets
     """
 
     tweets = set()
+    read_more_tweets = set()
 
-    progress_bar_xpath = "//div[@data-testid='primaryColumn']//div[@data-testid='cellInnerDiv']//div[@role='progressbar']"
+    progress_bar_selector = 'div[data-testid="primaryColumn"] div[data-testid="cellInnerDiv"] div[role="progressbar"]'
 
-    # Wait until the loading circle is present
-    WebDriverWait(driver, timeout=10, poll_frequency=0.25).until(
-        EC.presence_of_element_located((By.XPATH, '//article[@data-testid="tweet"]'))
-    )
+    page = context.pages[0] # Assuming the first page is the search page
+
+    await page.goto(advanced_url)
 
     while True:
-
         tweets_count = len(tweets)
+        try:
+            await page.wait_for_selector('article[data-testid="tweet"]', timeout=5000)
+        except TimeoutError:
+            break  # No tweets to load or load error
 
-        page_cards = driver.find_elements(By.XPATH, '//article[@data-testid="tweet"]')  # changed div by article
+        page_cards = await page.query_selector_all('article[data-testid="tweet"]')
+
+        break_loop = False
 
         for card in page_cards:
-            tweet = scrappy_get.get_tweet(card)  # Assuming this function returns a Tweet object or similar
-
+            tweet = await scrappy_get.get_tweet(card)  # Adjust get_tweet to be async and compatible with Playwright
             if tweet is not None:
-                tweets.add(tweet)
+                if tweet.show_more:
+                    read_more_tweets.add(tweet)
+                else:
+                    tweets.add(tweet)
 
-            if 0 < limit <= len(tweets):
+            if 0 < limit <= len(tweets) + len(read_more_tweets):
+                break_loop = True
                 break
+
+        if break_loop:
+            break
 
         if len(tweets) == tweets_count:
             break
 
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
+        await page.keyboard.press('End')
+        try:
+            await page.locator(progress_bar_selector).wait_for(timeout=5000, state="hidden")
+        except TimeoutError:
+            break  # No more tweets to load or load error
 
-        # Wait until the loading circle is present
-        WebDriverWait(driver, timeout=10, poll_frequency=0.25).until_not(
-            EC.presence_of_element_located((By.XPATH, progress_bar_xpath))
-        )
+        await page.wait_for_timeout(100)  # Give it a little bit of time to load more tweets
 
-        driver.implicitly_wait(0.1)
+    read_more_tweets = list(read_more_tweets)
 
-    read_more_tweets = [tweet for tweet in tweets if tweet.show_more]
+    for i in range(0, len(read_more_tweets), batch_size):
+        current_batch = read_more_tweets[i:i + batch_size]
+        pages = []
 
-    tweets = [tweet for tweet in tweets if not tweet.show_more]
+        # Open a batch of tabs
+        for tweet in current_batch:
+            if tweet.tweet_url is not None:
+                tweet_page = await page.context.new_page()
+                await tweet_page.goto(tweet.tweet_url)
+                pages.append((tweet_page, tweet))
 
-    while len(read_more_tweets) > 0:
+        # Process each tab in the batch
+        for tweet_page, tweet in pages:
+            try:
+                await tweet_page.wait_for_selector('div[data-testid="tweetText"]', timeout=2500)
+            except TimeoutError:
+                continue
 
-        counter = min(5, len(read_more_tweets))
-
-        for i in range(0, counter):
-            driver.execute_script("window.open('');")
-            driver.switch_to.window(driver.window_handles[-1])
-            driver.get(read_more_tweets[i].tweet_url)
-
-        for i in range(0, counter):
-            driver.switch_to.window(driver.window_handles[1])
-
-            tweet_content_xpath = "//div[@aria-label='Timeline: Conversation']//div[@data-testid='cellInnerDiv']//div[@data-testid='tweetText']"
-            WebDriverWait(driver, timeout=10, poll_frequency=0.25).until(
-                EC.presence_of_element_located((By.XPATH, tweet_content_xpath))
-            )
-
-            # Get the text of the tweet
-            text = driver.find_element(By.XPATH, tweet_content_xpath).text
-
-            read_more_tweets[0].text = text
-
-            tweets.append(read_more_tweets[0])
-
-            read_more_tweets.pop(0)
-
-            # Close the tab and switch back to the main search results tab
-            driver.close()
-
-        driver.switch_to.window(driver.window_handles[-1])
-
-    #driver.close()
+            text = await tweet_page.inner_text('div[data-testid="tweetText"]')
+            tweet.text = text
+            tweets.add(tweet)
+            await tweet_page.close()
 
     return list(tweets)
