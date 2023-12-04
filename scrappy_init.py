@@ -1,128 +1,107 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from time import sleep
 import json
 from pathlib import Path
-import random
-from selenium.common.exceptions import NoSuchElementException
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.by import By
+from playwright.sync_api import Browser, Page, TimeoutError
 
 
-def init(user_data: Path):
+def init_context(browser: Browser, user_file: Path):
     ublock_path = '/home/feliks/Work/Python/Scweet_PyCharm/uBlock'
 
-    user_info = {}
-    proxy = ''
-    cookies = {}
+    user_data = {}
 
-    with user_data.open('r') as file:
-        data = json.loads(file.read())
-        user_info['username'] = data['username']
-        user_info['password'] = data['password']
-        user_info['email'] = data['email']
-        cookies = data['cookies']
-        proxy = data['proxy']
+    with user_file.open('r') as file:
+        user_data = json.loads(file.read())
 
-    proxy = ''
+    cookies = []
 
-    options = Options()
+    # Get cookies
+    for cookie in user_data['cookies']:
+        if cookie.get('sameSite') in ['no_restriction', 'unspecified']:
+            cookie['sameSite'] = 'None'
+        elif cookie.get('sameSite') == 'lax':
+            cookie['sameSite'] = 'Lax'
+        else:
+            cookie['sameSite'] = 'None'
 
-    if proxy != '':
-        options.add_argument("--proxy-server=socks5://" + proxy)
+        cookie.pop('expirationDate', None)
+        cookie.pop('storeId', None)
+        cookie.pop('hostOnly', None)
+        cookie.pop('session', None)
 
+        cookies.append(cookie)
 
-    #options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--remote-debugging-port=9222")
-    options.add_argument("load-extension=" + ublock_path)
+    context = browser.new_context(
+        bypass_csp=True,
+        # proxy={"server": "socks5://" + user_data['proxy']} if user_data['proxy'] != '' else None,
+        user_agent=user_data['user_agent']
+    )
 
-    driver = webdriver.Chrome(options=options)
+    context.add_cookies(cookies)
 
-    sleep(4) #Wait for uBlock to load properly
+    page = context.new_page()
 
-    # Navigate to Twitter
-    driver.get("https://www.twitter.com")
+    page.goto("https://twitter.com/home")
 
-    # Load cookies from file
-    for cookie in cookies:
-        if 'twitter.com' in cookie['domain']:
-            # Map sameSite values
-            if cookie.get('sameSite') in ['no_restriction', 'unspecified']:
-                cookie['sameSite'] = 'None'
-            elif cookie.get('sameSite') == 'lax':
-                cookie['sameSite'] = 'Lax'
-            else:
-                # Set a default value or handle error
-                cookie['sameSite'] = 'None'
+    # This can redirect us to twitter.com, twitter.com/i/flow/login or twitter.com/home.
+    # We need to handle all of these cases
 
-            # Remove fields that are not recognized by Selenium
-            cookie.pop('expirationDate', None)
-            cookie.pop('storeId', None)
-            cookie.pop('hostOnly', None)
-            cookie.pop('session', None)
+    if page.url == "https://twitter.com/home":
+        return context
+    elif page.url == "https://twitter.com":
+        page.goto("https://twitter.com/i/flow/login")
+        page.wait_for_url("https://twitter.com/i/flow/login", timeout=5000)
 
-            # Add the cookie to the browser
-            driver.add_cookie(cookie)
+    if "https://twitter.com/i/flow/login" not in page.url:
+        print("Login redirect failed")
+        exit(1)
 
-    driver.refresh()
+    log_in(page, user_data)
 
-    counter = 5
-
-    while driver.current_url != "https://twitter.com/home" and counter > 0:
-        driver.implicitly_wait(1)
-
-        counter -= 1
-
-        if counter == 0 or "https://twitter.com/i/flow/login" in driver.current_url:
-            if 'https://twitter.com/i/flow/login' not in driver.current_url:
-                driver.get('https://twitter.com/i/flow/login')
-
-            log_in(driver, user_info)
-            if driver.current_url != "https://twitter.com/home":
-                print("Login failed")
-                exit(1)
-            break
-
-    #TODO: Add error handling when login is not done properly
-
-    return driver
+    return context
 
 
-def log_in(driver, user_data, timeout=20, wait=4):
+def log_in(page: Page, user_data, attempt=3):
+    """
+    Logs in to twitter
+    #TODO: Check each element's existence
+    :param attempt:
+    :param page:
+    :param user_data:
+    :return:
+    """
+    if attempt == 0:
+        print("Login failed")
+        exit(1)
 
-    email_xpath = '//input[@autocomplete="username"]'
-    password_xpath = '//input[@autocomplete="current-password"]'
-    username_xpath = '//input[@data-testid="ocfEnterTextTextInput"]'
+    email_input = page.get_by_label("Phone, email, or username")
 
-    sleep(random.uniform(wait, wait + 1))
-
-    # enter email
-    email_el = driver.find_element(By.XPATH, email_xpath)
-    sleep(random.uniform(wait, wait + 1))
-    email_el.send_keys(user_data['email'])
-    sleep(random.uniform(wait, wait + 1))
-    email_el.send_keys(Keys.RETURN)
-    sleep(random.uniform(wait, wait + 1))
-    # in case twitter spotted unusual login activity : enter your username
-    if check_exists_by_xpath(username_xpath, driver):
-        username_el = driver.find_element(By.XPATH, username_xpath)
-        sleep(random.uniform(wait, wait + 1))
-        username_el.send_keys(user_data['username'])
-        sleep(random.uniform(wait, wait + 1))
-        username_el.send_keys(Keys.RETURN)
-        sleep(random.uniform(wait, wait + 1))
-    # enter password
-    password_el = driver.find_element(By.XPATH, password_xpath)
-    password_el.send_keys(user_data['password'])
-    sleep(random.uniform(wait, wait + 1))
-    password_el.send_keys(Keys.RETURN)
-    sleep(random.uniform(wait, wait + 1))
-
-
-def check_exists_by_xpath(xpath, driver):
     try:
-        driver.find_element(By.XPATH, xpath)
-    except NoSuchElementException:
-        return False
-    return True
+        email_input.wait_for(timeout=5000)
+    except TimeoutError:
+        page.reload()
+        log_in(page, user_data, attempt - 1)
+        return
+
+    email_input.click()
+    email_input.fill(user_data['email'])
+    email_input.press("Enter")
+
+    username_input = page.locator("input[data-testid='ocfEnterTextTextInput']")
+    username_input.wait_for(timeout=1000)
+
+    if username_input.is_visible():
+        username_input.fill(user_data['username'])
+        username_input.press("Enter")
+
+    password_input = page.get_by_label("Password", exact=True)
+    password_input.wait_for(timeout=1000)
+
+    password_input.fill(user_data['password'])
+    password_input.press("Enter")
+
+    page.wait_for_url("https://twitter.com/home", timeout=5000)
+
+    if page.url != "https://twitter.com/home":
+        print("Login failed")
+        exit(1)
+
+

@@ -1,14 +1,9 @@
-from selenium import webdriver
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.by import By
+
+def search(username: str, since: str, until: str = None, no_replies: bool = False):
+    return log_search_page(from_account=username, since=since, until_local=until, display_type='Latest', no_replies=no_replies)
 
 
-def search(driver: webdriver, username: str, since: str, until: str = None, no_replies: bool = False):
-    return log_search_page(driver, from_account=username, since=since, until_local=until, display_type='Latest', no_replies=no_replies)
-
-
-def log_search_page(driver, since, until_local, lang=None, display_type=None, words=None, to_account=None, from_account=None,
+def log_search_page(since, until_local, lang=None, display_type=None, words=None, to_account=None, from_account=None,
                     mention_account=None,
                     hashtag=None, filter_replies=None, proximity=None,
                     geocode=None, minreplies=None, minlikes=None, minretweets=None, no_replies=None):
@@ -80,6 +75,5 @@ def log_search_page(driver, since, until_local, lang=None, display_type=None, wo
         no_replies = ""
 
     path = 'https://twitter.com/search?q=' + words + from_account + to_account + mention_account + hash_tags + until_local + no_replies + since + lang + filter_replies + geocode + minreplies + minlikes + minretweets + '&src=typed_query' + display_type + proximity
-    driver.get(path)
 
-    return driver
+    return path
