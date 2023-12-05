@@ -23,15 +23,20 @@ async def main():
             headless=False
         )
 
-        username = "thejacobmars"
+        username = "thedankoe"
 
         user_data = Path('cookies_StarStones24.json')
 
         context = await scrappy_init.init_context(browser, user_data)
 
-        search_url = scrappy_search.search(username, "2022-10-10", "2023-11-21", no_replies=True)
+        search_url = scrappy_search.search(
+            username,
+            "2022-12-20",
+            "2023-01-20",
+            no_replies=True
+        )
 
-        tweets = await scrappy_scrape.scrape_search(search_url, context, 50)
+        tweets = await scrappy_scrape.scrape_search(search_url, context, 800)
 
         update_cookies(await context.cookies("https://twitter.com"), user_data)
 

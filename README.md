@@ -3,7 +3,10 @@ Todo:
 * Save it to user file
 * Save the daily view tweet count to a file
 * Reset it when the daily limit is done
-* Block all ads, images, and videos (but save the urls?)
+* Add image scanning regardless of the data usage? Or just load everything (disable video autoplay)
+* Fix something went wrong, please reload
+* Handle videos, links, replies, retweets
+* Check tweet limit
 
 Note:
 * Enable data saving in accessibility options to prevent images and videos from loading

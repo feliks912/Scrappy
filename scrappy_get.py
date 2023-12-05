@@ -53,13 +53,29 @@ async def get_tweet(card: ElementHandle, save_images=False, save_dir=None):
 
     try:
         reply_element = await card.query_selector('div[data-testid="reply"]')
-        reply_cnt = int(await reply_element.inner_text() if reply_element else 0)
+        reply_cnt = await reply_element.inner_text() if reply_element else 0
+
+        if reply_cnt[-1] == 'K':
+            reply_cnt = int(float(reply_cnt[:-1])*1000)
+        elif reply_cnt[-1] == 'M':
+            reply_cnt = int(float(reply_cnt[:-1]) * 10e6)
+        else:
+            reply_cnt = int(reply_cnt)
+
     except Exception:
         pass
 
     try:
         retweet_element = await card.query_selector('div[data-testid="retweet"]')
-        retweet_cnt = int(await retweet_element.inner_text() if retweet_element else 0)
+        retweet_cnt = await retweet_element.inner_text() if retweet_element else 0
+
+        if retweet_cnt[-1] == 'K':
+            retweet_cnt = int(float(retweet_cnt[:-1])*1000)
+        elif retweet_cnt[-1] == 'M':
+            retweet_cnt = int(float(retweet_cnt[:-1]) * 10e6)
+        else:
+            retweet_cnt = int(retweet_cnt)
+
     except Exception:
         pass
 
@@ -68,13 +84,27 @@ async def get_tweet(card: ElementHandle, save_images=False, save_dir=None):
         if not like_element:
             like_element = await card.query_selector('div[data-testid="unlike"]')
 
-        like_cnt = int(await like_element.inner_text() if like_element else 0)
+        like_cnt = await like_element.inner_text() if like_element else 0
+        if like_cnt[-1] == 'K':
+            like_cnt = int(float(like_cnt[:-1])*1000)
+        elif like_cnt[-1] == 'M':
+            like_cnt = int(float(like_cnt[:-1]) * 10e6)
+        else:
+            like_cnt = int(like_cnt)
+
     except Exception:
         pass
 
     try:
         reach_element = await card.query_selector('div[aria-label*="views"] > div:nth-of-type(4)')
-        reach = int(await reach_element.inner_text() if reach_element else 0)
+        reach = await reach_element.inner_text() if reach_element else 0
+
+        if reach[-1] == 'K':
+            reach = int(float(reach[:-1])*1000)
+        elif reach[-1] == 'M':
+            reach = int(float(reach[:-1]) * 10e6)
+        else:
+            reach = int(reach)
     except Exception:
         pass
 

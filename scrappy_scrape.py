@@ -1,5 +1,6 @@
 from playwright.async_api import BrowserContext, TimeoutError
 import scrappy_get  # Assuming this is a custom module for handling tweet data
+import asyncio
 
 
 async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, batch_size=5):
@@ -24,12 +25,12 @@ async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, ba
 
     await page.goto(advanced_url)
 
+    await page.locator('article[data-testid="tweet"]').nth(0).is_visible()
+
+    page_up_attempted = False
+
     while True:
-        tweets_count = len(tweets)
-        try:
-            await page.wait_for_selector('article[data-testid="tweet"]', timeout=5000)
-        except TimeoutError:
-            break  # No tweets to load or load error
+        tweets_count = len(tweets) + len(read_more_tweets)
 
         page_cards = await page.query_selector_all('article[data-testid="tweet"]')
 
@@ -39,27 +40,45 @@ async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, ba
             tweet = await scrappy_get.get_tweet(card)  # Adjust get_tweet to be async and compatible with Playwright
             if tweet is not None:
                 if tweet.show_more:
+                    print("got tweet " + tweet.tweet_url)
                     read_more_tweets.add(tweet)
                 else:
                     tweets.add(tweet)
 
             if 0 < limit <= len(tweets) + len(read_more_tweets):
+                print("Found all tweets")
                 break_loop = True
                 break
 
         if break_loop:
             break
 
-        if len(tweets) == tweets_count:
-            break
+        if len(tweets) + len(read_more_tweets) == tweets_count:
+            if page_up_attempted:
+                print("Same number of tweets after scroll")
+                break
+
+            await page.keyboard.press('PageUp')
+            await page.keyboard.press('PageUp')
+            await page.wait_for_timeout(500)
+            page_up_attempted = True
+        elif page_up_attempted:
+            page_up_attempted = False
 
         await page.keyboard.press('End')
-        try:
-            await page.locator(progress_bar_selector).wait_for(timeout=5000, state="hidden")
-        except TimeoutError:
-            break  # No more tweets to load or load error
 
-        await page.wait_for_timeout(100)  # Give it a little bit of time to load more tweets
+        loading_selectors = page.locator(progress_bar_selector)
+
+        # Get the count of elements that match the locator
+        element_count = await loading_selectors.count()
+
+        # Create a list of tasks for each element based on its index
+        tasks = [loading_selectors.nth(i).is_hidden() for i in range(element_count)]
+
+        # Wait for all tasks (each element to be hidden) to complete
+        await asyncio.gather(*tasks)
+
+        await page.wait_for_timeout(500)  # Give it a little bit of time to load more tweets
 
     read_more_tweets = list(read_more_tweets)
 
@@ -76,14 +95,16 @@ async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, ba
 
         # Process each tab in the batch
         for tweet_page, tweet in pages:
-            try:
-                await tweet_page.wait_for_selector('div[data-testid="tweetText"]', timeout=2500)
-            except TimeoutError:
-                continue
+            tweet_text_path = 'div[data-testid="tweetText"]'
 
-            text = await tweet_page.inner_text('div[data-testid="tweetText"]')
+            await tweet_page.locator(tweet_text_path).nth(0).is_visible()
+
+            text = await tweet_page.inner_text(tweet_text_path)
+
             tweet.text = text
+            print("got long tweet " + tweet.tweet_url)
             tweets.add(tweet)
+
             await tweet_page.close()
 
     return list(tweets)
