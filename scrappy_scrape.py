@@ -1,14 +1,19 @@
+from typing import Union
+
 from playwright.async_api import BrowserContext, TimeoutError
 import scrappy_get  # Assuming this is a custom module for handling tweet data
 import asyncio
 
+from Tweet import Tweet
 
-async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, batch_size=5):
+
+async def scrape_search(advanced_url: str, context: BrowserContext, view_limit: int, limit=-1, batch_size=5) -> list[set[Tweet], int, int]:
     """
     Gets the Twitter advanced search timeline and scrapes limit tweets off of it.
 
     Tweets with 'Read more' can't have their text fetched on the timeline, so upon scraping all tweets the script opens those tweets separately 5 at a time in separate tabs and overwrites the text.
 
+    :param view_limit: How many tweet views remain for the user
     :param batch_size:
     :param context:
     :param advanced_url:
@@ -16,12 +21,14 @@ async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, ba
     :return: a list of scraped tweets
     """
 
+    view_remains = view_limit
+
     tweets = set()
     read_more_tweets = set()
 
     progress_bar_selector = 'div[data-testid="primaryColumn"] div[data-testid="cellInnerDiv"] div[role="progressbar"]'
 
-    page = context.pages[0] # Assuming the first page is the search page
+    page = context.pages[0]  # Assuming the first page is the search page
 
     await page.goto(advanced_url)
 
@@ -34,23 +41,23 @@ async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, ba
 
         page_cards = await page.query_selector_all('article[data-testid="tweet"]')
 
-        break_loop = False
-
         for card in page_cards:
             tweet = await scrappy_get.get_tweet(card)  # Adjust get_tweet to be async and compatible with Playwright
             if tweet is not None:
                 if tweet.show_more:
-                    print("got tweet " + tweet.tweet_url)
                     read_more_tweets.add(tweet)
                 else:
+                    print("got tweet " + tweet.tweet_url)
                     tweets.add(tweet)
 
-            if 0 < limit <= len(tweets) + len(read_more_tweets):
-                print("Found all tweets")
-                break_loop = True
-                break
+        user_remains = view_limit - len(tweets) - 2 * len(read_more_tweets)
 
-        if break_loop:
+        if view_remains <= 0:
+            print("User limit reached")
+            break
+
+        if 0 < limit <= len(tweets) + len(read_more_tweets):
+            print("Desired limit reached")
             break
 
         if len(tweets) + len(read_more_tweets) == tweets_count:
@@ -59,6 +66,7 @@ async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, ba
                 break
 
             await page.keyboard.press('PageUp')
+            await page.wait_for_timeout(500)
             await page.keyboard.press('PageUp')
             await page.wait_for_timeout(500)
             page_up_attempted = True
@@ -80,6 +88,8 @@ async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, ba
 
         await page.wait_for_timeout(500)  # Give it a little bit of time to load more tweets
 
+    print("Analyzing long tweets")
+
     read_more_tweets = list(read_more_tweets)
 
     for i in range(0, len(read_more_tweets), batch_size):
@@ -95,16 +105,17 @@ async def scrape_search(advanced_url: str, context: BrowserContext, limit=-1, ba
 
         # Process each tab in the batch
         for tweet_page, tweet in pages:
-            tweet_text_path = 'div[data-testid="tweetText"]'
+            tweet_text_locator = tweet_page.locator('div[data-testid="tweetText"]').nth(0)
 
-            await tweet_page.locator(tweet_text_path).nth(0).is_visible()
+            await tweet_text_locator.is_visible()
 
-            text = await tweet_page.inner_text(tweet_text_path)
+            if tweet_text_locator.is_visible():
+                text = await tweet_text_locator.inner_text()
 
-            tweet.text = text
-            print("got long tweet " + tweet.tweet_url)
-            tweets.add(tweet)
+                tweet.text = text
+                print("got long tweet " + tweet.tweet_url)
+                tweets.add(tweet)
 
             await tweet_page.close()
 
-    return list(tweets)
+    return [tweets, user_remains, 0]
